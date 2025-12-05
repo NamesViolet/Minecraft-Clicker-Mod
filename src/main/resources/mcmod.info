@@ -1,0 +1,16 @@
+[
+  {
+    "modid": "clickermod",
+    "name": "CLicker Mod",
+    "description": "",
+    "version": "${version}",
+    "mcversion": "${mcversion}",
+    "url": "",
+    "updateUrl": "",
+    "authorList": ["Aurora, Violet"],
+    "credits": "",
+    "logoFile": "",
+    "screenshots": [],
+    "dependencies": []
+  }
+]
