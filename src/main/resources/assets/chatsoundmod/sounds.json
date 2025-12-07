@@ -2,7 +2,10 @@
   "click": {
     "category": "master",
     "sounds": [
-      "click"
+      "click",
+      "click1",
+      "click2",
+      "click3"
     ]
   }
 }

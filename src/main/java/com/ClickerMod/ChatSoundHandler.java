@@ -1,34 +1,32 @@
 package com.ClickerMod;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.audio.ISound;
-import net.minecraft.client.audio.PositionedSoundRecord;
-import net.minecraft.client.audio.SoundCategory;
 import net.minecraft.util.IChatComponent;
-import net.minecraft.util.ResourceLocation;
 import net.minecraftforge.client.event.ClientChatReceivedEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 
 import javax.sound.sampled.*;
 import java.io.BufferedInputStream;
+import java.io.File;
+import java.io.InputStream;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class ChatSoundHandler {
 
+    private static final ExecutorService soundExecutor = Executors.newFixedThreadPool(2);
+
     @SubscribeEvent
     public void onClientChat(ClientChatReceivedEvent event) {
-        // Check if mod is enabled
         if (!ChatSoundMod.enabled) {
             return;
         }
 
-        // Only process normal chat messages
         if (event.type != 0) {
             return;
         }
 
-        // Check if triggers are configured
-        String rawTriggers = ChatSoundMod.triggerMessage;
-        if (rawTriggers == null || rawTriggers.trim().isEmpty()) {
+        if (ChatSoundMod.cachedTriggers == null || ChatSoundMod.cachedTriggers.length == 0) {
             return;
         }
 
@@ -42,274 +40,301 @@ public class ChatSoundHandler {
             return;
         }
 
-        Minecraft mc = Minecraft.getMinecraft();
-        
-        // Optionally ignore own messages
-        if (ChatSoundMod.ignoreSelf && mc.thePlayer != null) {
-            String playerName = mc.thePlayer.getName();
-            if (playerName != null) {
-                String selfPrefix = "<" + playerName + "> ";
-                if (message.startsWith(selfPrefix)) {
+        String senderName = extractSenderName(message);
+        if (senderName == null) {
+            return;
+        }
+
+        String senderLower = senderName.toLowerCase();
+
+        if (ChatSoundMod.ignoreSelf) {
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc.thePlayer != null) {
+                String playerName = mc.thePlayer.getName();
+                if (playerName != null && senderLower.equals(playerName.toLowerCase())) {
                     return;
                 }
             }
         }
 
-        // Extract sender name from message
-        String senderName = extractSenderName(message);
-
-        // Only allow messages from identifiable players
-        if (senderName == null) {
-            return;
-        }
-
-        // Check whitelist if enabled
-        if (ChatSoundMod.whitelistEnabled) {
-            String wlRaw = ChatSoundMod.whitelistPlayers;
-            
-            if (wlRaw == null || wlRaw.trim().isEmpty()) {
-                return;
-            }
-
-            boolean allowed = false;
-            String[] wlEntries = wlRaw.split(",");
-            for (String entry : wlEntries) {
-                String name = entry.trim();
-                if (name.isEmpty()) {
-                    continue;
-                }
-
-                if (senderName.equalsIgnoreCase(name)) {
-                    allowed = true;
-                    break;
-                }
-            }
-
-            if (!allowed) {
+        if (ChatSoundMod.whitelistEnabled && !ChatSoundMod.cachedWhitelistSet.isEmpty()) {
+            if (!ChatSoundMod.cachedWhitelistSet.contains(senderLower)) {
                 return;
             }
         }
 
-        // Check blacklist if enabled
-        if (ChatSoundMod.blacklistEnabled) {
-            String blRaw = ChatSoundMod.blacklistPlayers;
-            
-            if (senderName != null && blRaw != null && !blRaw.trim().isEmpty()) {
-                String[] blEntries = blRaw.split(",");
-                for (String entry : blEntries) {
-                    String name = entry.trim();
-                    if (name.isEmpty()) {
-                        continue;
-                    }
-
-                    if (senderName.equalsIgnoreCase(name)) {
-                        return;
-                    }
-                }
+        if (ChatSoundMod.blacklistEnabled && !ChatSoundMod.cachedBlacklistSet.isEmpty()) {
+            if (ChatSoundMod.cachedBlacklistSet.contains(senderLower)) {
+                return;
             }
         }
 
-        // Check if message contains any triggers
         String lowerMessage = message.toLowerCase();
         boolean matched = false;
+        String matchedTrigger = null;
 
-        String[] split = rawTriggers.split(",");
-        for (String part : split) {
-            String trigger = part.trim();
-            if (trigger.isEmpty()) {
-                continue;
-            }
-
-            if (lowerMessage.contains(trigger.toLowerCase())) {
+        for (String trigger : ChatSoundMod.cachedTriggers) {
+            if (containsWord(lowerMessage, trigger)) {
                 matched = true;
+                matchedTrigger = trigger;
                 break;
             }
         }
 
-        // Play sound if trigger matched
         if (matched) {
             playChatSound();
+            
+            if (matchedTrigger != null) {
+                ChatSoundMod.statsManager.recordTriggerWord(matchedTrigger);
+            }
+            ChatSoundMod.statsManager.recordPlayerTrigger(senderName);
         }
     }
 
-    // Extract sender username from various chat formats
+    private boolean containsWord(String message, String word) {
+        int index = 0;
+        int wordLen = word.length();
+        int msgLen = message.length();
+        
+        while (index <= msgLen - wordLen) {
+            int foundIndex = message.indexOf(word, index);
+            
+            if (foundIndex == -1) {
+                return false;
+            }
+            
+            char firstChar = word.charAt(0);
+            char lastChar = word.charAt(wordLen - 1);
+            
+            boolean validStart = foundIndex == 0 || 
+                                !isWordCharacter(message.charAt(foundIndex - 1)) || 
+                                !isWordCharacter(firstChar);
+            
+            boolean validEnd = (foundIndex + wordLen == msgLen) || 
+                              !isWordCharacter(message.charAt(foundIndex + wordLen)) || 
+                              !isWordCharacter(lastChar);
+            
+            if (validStart && validEnd) {
+                return true;
+            }
+            
+            index = foundIndex + 1;
+        }
+        
+        return false;
+    }
+    
+    private boolean isWordCharacter(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+    }
+
     private String extractSenderName(String message) {
         if (message == null || message.isEmpty()) {
             return null;
         }
 
-        // Format: <PlayerName> message
-        if (message.startsWith("<")) {
+        if (message.charAt(0) == '<') {
             int end = message.indexOf("> ");
-            if (end > 1) {
+            if (end > 1 && end < 17) {
                 return message.substring(1, end);
             }
         }
 
-        // Format: PlayerName: message or [Rank] PlayerName: message
         int colonIndex = message.indexOf(": ");
-        if (colonIndex > 0) {
+        if (colonIndex > 0 && colonIndex < 50) {
             String beforeColon = message.substring(0, colonIndex);
             
-            // Check for rank prefix
-            int lastBracket = beforeColon.lastIndexOf("] ");
-            if (lastBracket > 0 && lastBracket < beforeColon.length() - 2) {
-                return beforeColon.substring(lastBracket + 2).trim();
+            String cleaned = beforeColon;
+            int openBracket;
+            while ((openBracket = cleaned.indexOf('[')) >= 0) {
+                int closeBracket = cleaned.indexOf(']', openBracket);
+                if (closeBracket > openBracket) {
+                    cleaned = (cleaned.substring(0, openBracket) + " " + 
+                              cleaned.substring(closeBracket + 1)).trim();
+                } else {
+                    break;
+                }
             }
             
-            // No rank, check length
-            if (beforeColon.length() <= 16) {
-                return beforeColon.trim();
+            if (cleaned.length() > 0 && cleaned.length() <= 16 && cleaned.indexOf(' ') == -1) {
+                return cleaned;
             }
         }
 
-        // Format: [Rank] <PlayerName> message
-        int bracketEnd = message.indexOf("] ");
-        if (bracketEnd > 0 && message.length() > bracketEnd + 2) {
-            String afterBracket = message.substring(bracketEnd + 2);
-            if (afterBracket.startsWith("<")) {
-                int end = afterBracket.indexOf("> ");
-                if (end > 1) {
-                    return afterBracket.substring(1, end);
+        int startPos = 0;
+        while (startPos < message.length() && message.charAt(startPos) == '[') {
+            int closeBracket = message.indexOf(']', startPos);
+            if (closeBracket > 0 && closeBracket < message.length() - 1) {
+                startPos = closeBracket + 1;
+                while (startPos < message.length() && message.charAt(startPos) == ' ') {
+                    startPos++;
                 }
+            } else {
+                break;
+            }
+        }
+        
+        if (startPos < message.length() && message.charAt(startPos) == '<') {
+            int end = message.indexOf("> ", startPos);
+            if (end > startPos + 1) {
+                return message.substring(startPos + 1, end);
             }
         }
 
         return null;
     }
 
-    // Play the currently selected sound
     private void playChatSound() {
-        playSound(ChatSoundMod.selectedSound);
+        String soundToPlay = ChatSoundMod.soundManager.getSoundToPlay();
+        playSound(soundToPlay);
     }
     
-    // Play a sound file by name
     public static void playSound(final String soundName) {
-        // Run in separate thread to avoid blocking game
-        new Thread(() -> {
-            Clip clip = null;
-            AudioInputStream audioStream = null;
-            
-            try {
-                java.io.InputStream audioSrc = null;
-                String sourceName = "";
+        soundExecutor.submit(new Runnable() {
+            public void run() {
+                Clip clip = null;
+                AudioInputStream audioStream = null;
+                AudioInputStream decodedStream = null;
+                InputStream audioSrc = null;
                 
-                // Check custom sounds directory
-                java.io.File customWav = new java.io.File(ChatSoundMod.customSoundsDir, soundName + ".wav");
-                java.io.File customOgg = new java.io.File(ChatSoundMod.customSoundsDir, soundName + ".ogg");
-                java.io.File customMp3 = new java.io.File(ChatSoundMod.customSoundsDir, soundName + ".mp3");
-                
-                if (customWav.exists()) {
-                    audioSrc = new java.io.FileInputStream(customWav);
-                    sourceName = "custom: " + customWav.getName();
-                } else if (customOgg.exists()) {
-                    audioSrc = new java.io.FileInputStream(customOgg);
-                    sourceName = "custom: " + customOgg.getName();
-                } else if (customMp3.exists()) {
-                    audioSrc = new java.io.FileInputStream(customMp3);
-                    sourceName = "custom: " + customMp3.getName();
-                } else {
-                    // Fall back to built-in resources
-                    String soundPath = "/assets/" + ChatSoundMod.MODID + "/sounds/" + soundName + ".wav";
-                    audioSrc = ChatSoundHandler.class.getResourceAsStream(soundPath);
+                try {
+                    String sourceName = "";
                     
-                    if (audioSrc == null) {
-                        soundPath = "/assets/" + ChatSoundMod.MODID + "/sounds/" + soundName + ".ogg";
-                        audioSrc = ChatSoundHandler.class.getResourceAsStream(soundPath);
-                    }
+                    File customFile = ChatSoundMod.soundManager.getCustomSoundFile(soundName);
                     
-                    if (audioSrc == null) {
-                        System.err.println("[ChatSoundMod] Could not find sound: " + soundName);
-                        System.err.println("[ChatSoundMod] Searched in: " + ChatSoundMod.customSoundsDir.getAbsolutePath());
-                        System.err.println("[ChatSoundMod] And in mod resources");
-                        return;
-                    }
-                    
-                    sourceName = "built-in: " + soundName;
-                }
-                
-                BufferedInputStream bufferedIn = new BufferedInputStream(audioSrc);
-                
-                // Get audio stream
-                audioStream = AudioSystem.getAudioInputStream(bufferedIn);
-                AudioFormat baseFormat = audioStream.getFormat();
-                
-                // Convert to PCM format
-                AudioFormat decodedFormat = new AudioFormat(
-                    AudioFormat.Encoding.PCM_SIGNED,
-                    baseFormat.getSampleRate(),
-                    16,
-                    baseFormat.getChannels(),
-                    baseFormat.getChannels() * 2,
-                    baseFormat.getSampleRate(),
-                    false
-                );
-                
-                AudioInputStream decodedStream = AudioSystem.getAudioInputStream(decodedFormat, audioStream);
-                
-                // Create and open clip
-                DataLine.Info info = new DataLine.Info(Clip.class, decodedFormat);
-                clip = (Clip) AudioSystem.getLine(info);
-                
-                clip.open(decodedStream);
-                
-                // Set volume
-                if (clip.isControlSupported(FloatControl.Type.MASTER_GAIN)) {
-                    FloatControl volume = (FloatControl) clip.getControl(FloatControl.Type.MASTER_GAIN);
-                    
-                    float dB;
-                    if (ChatSoundMod.soundVolume <= 0.01F) {
-                        dB = volume.getMinimum();
-                    } else if (ChatSoundMod.soundVolume <= 1.0F) {
-                        dB = volume.getMinimum() + (0.0F - volume.getMinimum()) * ChatSoundMod.soundVolume;
+                    if (customFile != null) {
+                        audioSrc = new java.io.FileInputStream(customFile);
+                        sourceName = "custom: " + customFile.getName();
                     } else {
-                        dB = Math.min(6.0F, (ChatSoundMod.soundVolume - 1.0F) * 6.0F);
+                        String soundPath = "/assets/" + ChatSoundMod.MODID + "/sounds/" + soundName + ".wav";
+                        audioSrc = ChatSoundHandler.class.getResourceAsStream(soundPath);
+                        
+                        if (audioSrc == null) {
+                            soundPath = "/assets/" + ChatSoundMod.MODID + "/sounds/" + soundName + ".ogg";
+                            audioSrc = ChatSoundHandler.class.getResourceAsStream(soundPath);
+                        }
+                        
+                        if (audioSrc == null) {
+                            System.err.println("[ChatSoundMod] Could not find sound: " + soundName);
+                            System.err.println("[ChatSoundMod] Searched in: " + ChatSoundMod.soundManager.getCustomSoundsDir().getAbsolutePath());
+                            System.err.println("[ChatSoundMod] And in mod resources");
+                            return;
+                        }
+                        
+                        sourceName = "built-in: " + soundName;
                     }
                     
-                    dB = Math.max(volume.getMinimum(), Math.min(volume.getMaximum(), dB));
-                    volume.setValue(dB);
-                }
-                
-                // Set up cleanup on stop
-                final Clip finalClip = clip;
-                final AudioInputStream finalStream = decodedStream;
-                final AudioInputStream finalBaseStream = audioStream;
-                
-                clip.addLineListener(event -> {
-                    if (event.getType() == LineEvent.Type.STOP) {
-                        finalClip.close();
-                        try {
-                            if (finalStream != null) finalStream.close();
-                            if (finalBaseStream != null) finalBaseStream.close();
-                        } catch (Exception e) {
-                            e.printStackTrace();
+                    BufferedInputStream bufferedIn = new BufferedInputStream(audioSrc);
+                    
+                    audioStream = AudioSystem.getAudioInputStream(bufferedIn);
+                    AudioFormat baseFormat = audioStream.getFormat();
+                    
+                    AudioFormat decodedFormat = new AudioFormat(
+                        AudioFormat.Encoding.PCM_SIGNED,
+                        baseFormat.getSampleRate(),
+                        16,
+                        baseFormat.getChannels(),
+                        baseFormat.getChannels() * 2,
+                        baseFormat.getSampleRate(),
+                        false
+                    );
+                    
+                    decodedStream = AudioSystem.getAudioInputStream(decodedFormat, audioStream);
+                    
+                    DataLine.Info info = new DataLine.Info(Clip.class, decodedFormat);
+                    clip = (Clip) AudioSystem.getLine(info);
+                    
+                    clip.open(decodedStream);
+                    
+                    if (clip.isControlSupported(FloatControl.Type.MASTER_GAIN)) {
+                        FloatControl volume = (FloatControl) clip.getControl(FloatControl.Type.MASTER_GAIN);
+                        
+                        float dB;
+                        if (ChatSoundMod.soundVolume <= 0.01F) {
+                            dB = volume.getMinimum();
+                        } else if (ChatSoundMod.soundVolume <= 1.0F) {
+                            dB = volume.getMinimum() + (0.0F - volume.getMinimum()) * ChatSoundMod.soundVolume;
+                        } else {
+                            dB = Math.min(6.0F, (ChatSoundMod.soundVolume - 1.0F) * 6.0F);
                         }
+                        
+                        dB = Math.max(volume.getMinimum(), Math.min(volume.getMaximum(), dB));
+                        volume.setValue(dB);
                     }
-                });
-                
-                // Start playback
-                clip.start();
-                
-            } catch (UnsupportedAudioFileException e) {
-                System.err.println("[ChatSoundMod] Unsupported audio format for: " + soundName);
-                System.err.println("[ChatSoundMod] Supported formats: WAV, OGG (if codec available), MP3 (if codec available)");
-                System.err.println("[ChatSoundMod] Recommended: Convert to WAV format");
-            } catch (Exception e) {
-                System.err.println("[ChatSoundMod] Error playing sound: " + soundName);
-                e.printStackTrace();
-                
-                // Cleanup on error
-                if (clip != null && clip.isOpen()) {
-                    clip.close();
-                }
-                if (audioStream != null) {
-                    try {
-                        audioStream.close();
-                    } catch (Exception ex) {
-                        ex.printStackTrace();
-                    }
+                    
+                    final Clip finalClip = clip;
+                    final AudioInputStream finalDecodedStream = decodedStream;
+                    final AudioInputStream finalBaseStream = audioStream;
+                    final InputStream finalAudioSrc = audioSrc;
+                    
+                    clip.addLineListener(new LineListener() {
+                        public void update(LineEvent event) {
+                            if (event.getType() == LineEvent.Type.STOP) {
+                                finalClip.close();
+                                try {
+                                    if (finalDecodedStream != null) finalDecodedStream.close();
+                                    if (finalBaseStream != null) finalBaseStream.close();
+                                    if (finalAudioSrc != null) finalAudioSrc.close();
+                                } catch (Exception e) {
+                                    e.printStackTrace();
+                                }
+                            }
+                        }
+                    });
+                    
+                    clip.start();
+                    
+                } catch (UnsupportedAudioFileException e) {
+                    System.err.println("[ChatSoundMod] Unsupported audio format for: " + soundName);
+                    System.err.println("[ChatSoundMod] Supported formats: WAV, OGG (if codec available), MP3 (if codec available)");
+                    System.err.println("[ChatSoundMod] Recommended: Convert to WAV format");
+                    cleanup(clip, decodedStream, audioStream, audioSrc);
+                } catch (Exception e) {
+                    System.err.println("[ChatSoundMod] Error playing sound: " + soundName);
+                    e.printStackTrace();
+                    cleanup(clip, decodedStream, audioStream, audioSrc);
                 }
             }
-        }, "ChatSoundMod-Audio").start();
+        });
+    }
+    
+    private static void cleanup(Clip clip, AudioInputStream decodedStream, AudioInputStream audioStream, InputStream audioSrc) {
+        try {
+            if (clip != null && clip.isOpen()) {
+                clip.close();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        
+        try {
+            if (decodedStream != null) {
+                decodedStream.close();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        
+        try {
+            if (audioStream != null) {
+                audioStream.close();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        
+        try {
+            if (audioSrc != null) {
+                audioSrc.close();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+    
+    public static void shutdown() {
+        if (soundExecutor != null && !soundExecutor.isShutdown()) {
+            soundExecutor.shutdown();
+        }
     }
 }

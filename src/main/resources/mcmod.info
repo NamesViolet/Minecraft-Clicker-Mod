@@ -1,7 +1,7 @@
 [
   {
     "modid": "clickermod",
-    "name": "CLicker Mod",
+    "name": "Clicker Mod",
     "description": "",
     "version": "${version}",
     "mcversion": "${mcversion}",

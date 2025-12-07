@@ -7,10 +7,11 @@ import net.minecraft.util.ChatComponentText;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 public class ChatSoundCommand extends CommandBase {
 
-    // Chat color codes
     private static final String COLOR = "\u00A7b";
     private static final String RESET = "\u00A7r";
 
@@ -21,7 +22,7 @@ public class ChatSoundCommand extends CommandBase {
 
     @Override
     public String getCommandUsage(ICommandSender sender) {
-        return "/clckrm Trg <triggers> | /clckrm Vol <0.0-2.0> | /clckrm Select <sound> | /clckrm Preview <sound> | /clckrm List | /clckrm Self <on|off> | /clckrm WL/BL <options>";
+        return "/clckrm | /clckrm h for help";
     }
 
     @Override
@@ -31,17 +32,23 @@ public class ChatSoundCommand extends CommandBase {
 
     @Override
     public void processCommand(ICommandSender sender, String[] args) throws CommandException {
-        // Show status when no arguments provided
         if (args.length == 0) {
             String triggers = ChatSoundMod.triggerMessage == null ? "" : ChatSoundMod.triggerMessage;
             String wlState = ChatSoundMod.whitelistEnabled ? "ON" : "OFF";
             String blState = ChatSoundMod.blacklistEnabled ? "ON" : "OFF";
             String selfState = ChatSoundMod.ignoreSelf ? "ON" : "OFF";
+            String statsState = ChatSoundMod.statsManager.isTrackingEnabled() ? "ON" : "OFF";
+            String randomState = ChatSoundMod.soundManager.isRandomizeSounds() ? "ON" : "OFF";
 
             sender.addChatMessage(new ChatComponentText(COLOR + "Triggers: " + (triggers.isEmpty() ? "<none>" : triggers) + RESET));
             sender.addChatMessage(new ChatComponentText(COLOR + "Volume: " + String.format("%.2f", ChatSoundMod.soundVolume) + RESET));
-            sender.addChatMessage(new ChatComponentText(COLOR + "Selected Sound: " + ChatSoundMod.selectedSound + RESET));
+            sender.addChatMessage(new ChatComponentText(COLOR + "Selected Sound: " + ChatSoundMod.soundManager.getSelectedSound() + RESET));
+            sender.addChatMessage(new ChatComponentText(COLOR + "Randomize: " + randomState + RESET));
+            if (ChatSoundMod.soundManager.isRandomizeSounds()) {
+                sender.addChatMessage(new ChatComponentText(COLOR + "Sound Pool: " + ChatSoundMod.soundManager.getSoundPool() + RESET));
+            }
             sender.addChatMessage(new ChatComponentText(COLOR + "IgnoreSelf: " + selfState + RESET));
+            sender.addChatMessage(new ChatComponentText(COLOR + "Track Stats: " + statsState + RESET));
             sender.addChatMessage(new ChatComponentText(COLOR + "Whitelist: " + wlState + RESET));
             sender.addChatMessage(new ChatComponentText(COLOR + "Blacklist: " + blState + RESET));
             sender.addChatMessage(new ChatComponentText(
@@ -49,39 +56,40 @@ public class ChatSoundCommand extends CommandBase {
             return;
         }
 
-        // Help command - show detailed usage information
         if ("help".equalsIgnoreCase(args[0]) || "h".equalsIgnoreCase(args[0])) {
             String triggers = ChatSoundMod.triggerMessage == null ? "" : ChatSoundMod.triggerMessage;
             String selfState = ChatSoundMod.ignoreSelf ? "ON (your messages are ignored)" : "OFF (your messages can trigger)";
-            String wlState = ChatSoundMod.whitelistEnabled ? "ON (only whitelisted players can trigger)" : "OFF (any player can trigger)";
-            String wlList = (ChatSoundMod.whitelistPlayers == null || ChatSoundMod.whitelistPlayers.trim().isEmpty())
-                    ? "<none>"
-                    : ChatSoundMod.whitelistPlayers;
+            String statsState = ChatSoundMod.statsManager.isTrackingEnabled() ? "ON (statistics are being tracked)" : "OFF (statistics are not tracked)";
+            String randomState = ChatSoundMod.soundManager.isRandomizeSounds() ? "ON (random sounds enabled)" : "OFF (using selected sound)";
 
             sender.addChatMessage(new ChatComponentText(COLOR + "Current triggers: " + (triggers.isEmpty() ? "<none>" : triggers) + RESET));
             sender.addChatMessage(new ChatComponentText(COLOR + "Volume: " + String.format("%.2f", ChatSoundMod.soundVolume) + " (bypasses game volume)" + RESET));
-            sender.addChatMessage(new ChatComponentText(COLOR + "Selected Sound: " + ChatSoundMod.selectedSound + RESET));
-            sender.addChatMessage(new ChatComponentText(COLOR + "Custom Sounds Directory: " + ChatSoundMod.customSoundsDir.getAbsolutePath() + RESET));
+            sender.addChatMessage(new ChatComponentText(COLOR + "Selected Sound: " + ChatSoundMod.soundManager.getSelectedSound() + RESET));
+            sender.addChatMessage(new ChatComponentText(COLOR + "Randomize: " + randomState + RESET));
+            sender.addChatMessage(new ChatComponentText(COLOR + "Custom Sounds Directory: " + ChatSoundMod.soundManager.getCustomSoundsDir().getAbsolutePath() + RESET));
             sender.addChatMessage(new ChatComponentText(COLOR + "IgnoreSelf: " + selfState + RESET));
-            sender.addChatMessage(new ChatComponentText(COLOR + "Whitelist: " + wlState + RESET));
+            sender.addChatMessage(new ChatComponentText(COLOR + "Track Stats: " + statsState + RESET));
             sender.addChatMessage(new ChatComponentText(COLOR + "Commands:" + RESET));
             sender.addChatMessage(new ChatComponentText(COLOR + "/clckrm Trg <trigger1,trigger2,...> - set trigger words" + RESET));
-            sender.addChatMessage(new ChatComponentText(COLOR + "/clckrm Vol <0.0-2.0> - set sound volume (independent of game volume)" + RESET));
+            sender.addChatMessage(new ChatComponentText(COLOR + "/clckrm Vol <0.0-2.0> - set sound volume" + RESET));
             sender.addChatMessage(new ChatComponentText(COLOR + "/clckrm Select <sound> - select which sound to play" + RESET));
+            sender.addChatMessage(new ChatComponentText(COLOR + "/clckrm Random <on|off> - toggle sound randomization" + RESET));
+            sender.addChatMessage(new ChatComponentText(COLOR + "/clckrm Pool <sound1,sound2,...> - set random sound pool" + RESET));
             sender.addChatMessage(new ChatComponentText(COLOR + "/clckrm Preview <sound> - preview a sound effect" + RESET));
             sender.addChatMessage(new ChatComponentText(COLOR + "/clckrm List - list all available sounds" + RESET));
             sender.addChatMessage(new ChatComponentText(COLOR + "/clckrm Self <on|off> - ignore or include your own messages" + RESET));
+            sender.addChatMessage(new ChatComponentText(COLOR + "/clckrm Stats <on|off|word|pl|clear> - manage statistics" + RESET));
             sender.addChatMessage(new ChatComponentText(COLOR + "Do /clckrm WL h or /clckrm WL help for whitelist/blacklist settings" + RESET));
             return;
         }
 
-        // Select sound command - choose which sound file to play
+        // Select sound command
         if ("select".equalsIgnoreCase(args[0]) || "sel".equalsIgnoreCase(args[0])) {
             if (args.length < 2) {
                 sender.addChatMessage(new ChatComponentText(
                         COLOR + "Usage: /clckrm Select <sound_name>" + RESET));
                 sender.addChatMessage(new ChatComponentText(
-                        COLOR + "Current: " + ChatSoundMod.selectedSound + RESET));
+                        COLOR + "Current: " + ChatSoundMod.soundManager.getSelectedSound() + RESET));
                 return;
             }
 
@@ -92,29 +100,7 @@ public class ChatSoundCommand extends CommandBase {
                 return;
             }
 
-            // Check if sound exists in custom directory
-            java.io.File customWav = new java.io.File(ChatSoundMod.customSoundsDir, soundName + ".wav");
-            java.io.File customOgg = new java.io.File(ChatSoundMod.customSoundsDir, soundName + ".ogg");
-            java.io.File customMp3 = new java.io.File(ChatSoundMod.customSoundsDir, soundName + ".mp3");
-            
-            boolean existsCustom = customWav.exists() || customOgg.exists() || customMp3.exists();
-            
-            // Check if sound exists in built-in resources
-            boolean existsBuiltIn = false;
-            try {
-                java.io.InputStream wavStream = getClass().getResourceAsStream(
-                    "/assets/" + ChatSoundMod.MODID + "/sounds/" + soundName + ".wav");
-                java.io.InputStream oggStream = getClass().getResourceAsStream(
-                    "/assets/" + ChatSoundMod.MODID + "/sounds/" + soundName + ".ogg");
-                    
-                existsBuiltIn = (wavStream != null || oggStream != null);
-                
-                if (wavStream != null) wavStream.close();
-                if (oggStream != null) oggStream.close();
-            } catch (Exception e) {
-            }
-
-            if (!existsCustom && !existsBuiltIn) {
+            if (!ChatSoundMod.soundManager.isSoundAvailable(soundName)) {
                 sender.addChatMessage(new ChatComponentText(
                         COLOR + "Sound not found: " + soundName + RESET));
                 sender.addChatMessage(new ChatComponentText(
@@ -128,7 +114,72 @@ public class ChatSoundCommand extends CommandBase {
             return;
         }
 
-        // Preview sound command - test play a sound effect
+        // Random command - toggle randomization
+        if ("random".equalsIgnoreCase(args[0]) || "rand".equalsIgnoreCase(args[0])) {
+            if (args.length < 2) {
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "Usage: /clckrm Random <on|off>" + RESET));
+                String state = ChatSoundMod.soundManager.isRandomizeSounds() ? "ON" : "OFF";
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "Current: " + state + RESET));
+                return;
+            }
+
+            String mode = args[1].toLowerCase();
+            Boolean value = null;
+            if ("on".equals(mode) || "true".equals(mode)) {
+                value = Boolean.TRUE;
+            } else if ("off".equals(mode) || "false".equals(mode)) {
+                value = Boolean.FALSE;
+            }
+
+            if (value == null) {
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "Invalid value. Use: /clckrm Random <on|off>" + RESET));
+                return;
+            }
+
+            ChatSoundMod.setRandomizeSounds(value.booleanValue());
+
+            if (value.booleanValue()) {
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "Sound randomization ENABLED." + RESET));
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "Sound pool: " + ChatSoundMod.soundManager.getSoundPool() + RESET));
+            } else {
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "Sound randomization DISABLED. Using: " + ChatSoundMod.soundManager.getSelectedSound() + RESET));
+            }
+            return;
+        }
+
+        // Pool command - set sound pool for randomization
+        if ("pool".equalsIgnoreCase(args[0])) {
+            if (args.length < 2) {
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "Usage: /clckrm Pool <sound1,sound2,sound3,...>" + RESET));
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "Current pool: " + ChatSoundMod.soundManager.getSoundPool() + RESET));
+                return;
+            }
+
+            String pool = String.join(" ", Arrays.copyOfRange(args, 1, args.length)).trim();
+            if (pool.isEmpty()) {
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "Sound pool cannot be empty." + RESET));
+                return;
+            }
+
+            ChatSoundMod.setSoundPool(pool);
+
+            sender.addChatMessage(new ChatComponentText(
+                    COLOR + "Sound pool set to: " + pool + RESET));
+            sender.addChatMessage(new ChatComponentText(
+                    COLOR + "Randomization: " + (ChatSoundMod.soundManager.isRandomizeSounds() ? "ON" : "OFF (use /clckrm Random on)") + RESET));
+            return;
+        }
+
+        // Preview sound command
         if ("preview".equalsIgnoreCase(args[0]) || "test".equalsIgnoreCase(args[0]) || "play".equalsIgnoreCase(args[0])) {
             if (args.length < 2) {
                 sender.addChatMessage(new ChatComponentText(
@@ -146,51 +197,46 @@ public class ChatSoundCommand extends CommandBase {
             sender.addChatMessage(new ChatComponentText(
                     COLOR + "Playing preview: " + soundName + RESET));
             
-            com.ClickerMod.ChatSoundHandler.playSound(soundName);
+            ChatSoundHandler.playSound(soundName);
             return;
         }
 
-        // List sounds command - show all available sound files
+        // List sounds command
         if ("list".equalsIgnoreCase(args[0]) || "ls".equalsIgnoreCase(args[0]) || "sounds".equalsIgnoreCase(args[0])) {
             sender.addChatMessage(new ChatComponentText(
                     COLOR + "=== Available Sounds ===" + RESET));
             
-            // Show built-in sounds
-            sender.addChatMessage(new ChatComponentText(COLOR + "Built-in sounds:" + RESET));
-            sender.addChatMessage(new ChatComponentText("  - click"));
+            Set<String> allSounds = ChatSoundMod.soundManager.getAvailableSounds();
             
-            // Show custom sounds from directory
-            sender.addChatMessage(new ChatComponentText(COLOR + "Custom sounds:" + RESET));
-            java.io.File[] files = ChatSoundMod.customSoundsDir.listFiles();
-            boolean foundCustom = false;
-            
-            if (files != null && files.length > 0) {
-                for (java.io.File file : files) {
-                    if (file.isFile()) {
-                        String name = file.getName();
-                        if (name.endsWith(".wav") || name.endsWith(".ogg") || name.endsWith(".mp3")) {
-                            String soundName = name.substring(0, name.lastIndexOf('.'));
-                            sender.addChatMessage(new ChatComponentText("  - " + soundName + " (" + name + ")"));
-                            foundCustom = true;
-                        }
-                    }
-                }
-            }
-            
-            if (!foundCustom) {
+            if (allSounds.isEmpty()) {
                 sender.addChatMessage(new ChatComponentText("  <none>"));
                 sender.addChatMessage(new ChatComponentText(
                         COLOR + "Add .wav, .ogg, or .mp3 files to:" + RESET));
                 sender.addChatMessage(new ChatComponentText(
-                        "  " + ChatSoundMod.customSoundsDir.getAbsolutePath()));
+                        "  " + ChatSoundMod.soundManager.getCustomSoundsDir().getAbsolutePath()));
+            } else {
+                for (String sound : allSounds) {
+                    if ("click".equals(sound) || "click1".equals(sound) || 
+                        "click2".equals(sound) || "click3".equals(sound)) {
+                        sender.addChatMessage(new ChatComponentText("  - " + sound + " (built-in)"));
+                    } else {
+                        sender.addChatMessage(new ChatComponentText("  - " + sound + " (custom)"));
+                    }
+                }
             }
             
             sender.addChatMessage(new ChatComponentText(
-                    COLOR + "Currently selected: " + ChatSoundMod.selectedSound + RESET));
+                    COLOR + "Currently selected: " + ChatSoundMod.soundManager.getSelectedSound() + RESET));
+            sender.addChatMessage(new ChatComponentText(
+                    COLOR + "Randomization: " + (ChatSoundMod.soundManager.isRandomizeSounds() ? "ON" : "OFF") + RESET));
+            if (ChatSoundMod.soundManager.isRandomizeSounds()) {
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "Sound pool: " + ChatSoundMod.soundManager.getSoundPool() + RESET));
+            }
             return;
         }
 
-        // Set triggers command - configure trigger words/phrases
+        // Set triggers command
         if ("trg".equalsIgnoreCase(args[0])) {
             if (args.length < 2) {
                 sender.addChatMessage(new ChatComponentText(
@@ -198,7 +244,6 @@ public class ChatSoundCommand extends CommandBase {
                 return;
             }
 
-            // Join all arguments to preserve spaces in triggers
             String triggers = String.join(" ", Arrays.copyOfRange(args, 1, args.length)).trim();
             if (triggers.isEmpty()) {
                 sender.addChatMessage(new ChatComponentText(
@@ -213,7 +258,7 @@ public class ChatSoundCommand extends CommandBase {
             return;
         }
 
-        // Set volume command - adjust sound volume level
+        // Set volume command
         if ("vol".equalsIgnoreCase(args[0]) || "volume".equalsIgnoreCase(args[0])) {
             if (args.length < 2) {
                 sender.addChatMessage(new ChatComponentText(
@@ -247,7 +292,7 @@ public class ChatSoundCommand extends CommandBase {
             return;
         }
 
-        // Ignore self command - toggle whether own messages trigger sound
+        // Ignore self command
         if ("self".equalsIgnoreCase(args[0])) {
             if (args.length < 2) {
                 sender.addChatMessage(new ChatComponentText(
@@ -269,9 +314,9 @@ public class ChatSoundCommand extends CommandBase {
                 return;
             }
 
-            ChatSoundMod.setIgnoreSelf(value);
+            ChatSoundMod.setIgnoreSelf(value.booleanValue());
 
-            if (value) {
+            if (value.booleanValue()) {
                 sender.addChatMessage(new ChatComponentText(
                         COLOR + "Your own chat messages will NOT trigger the sound." + RESET));
             } else {
@@ -281,7 +326,136 @@ public class ChatSoundCommand extends CommandBase {
             return;
         }
 
-        // Whitelist management - control which players can trigger sounds
+        // Statistics command
+        if ("stats".equalsIgnoreCase(args[0]) || "statistics".equalsIgnoreCase(args[0])) {
+            if (args.length < 2) {
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "Usage: /clckrm Stats <on|off|word|pl|clear> [page]" + RESET));
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "  on/off - enable/disable statistics tracking" + RESET));
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "  word - show trigger word statistics" + RESET));
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "  pl [page] - show player statistics" + RESET));
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "  clear - reset all statistics" + RESET));
+                return;
+            }
+
+            String statType = args[1].toLowerCase();
+
+            if ("on".equals(statType) || "off".equals(statType)) {
+                boolean enable = "on".equals(statType);
+                ChatSoundMod.setTrackStats(enable);
+
+                if (enable) {
+                    sender.addChatMessage(new ChatComponentText(
+                            COLOR + "Statistics tracking ENABLED. Statistics will be saved every 30 seconds." + RESET));
+                } else {
+                    sender.addChatMessage(new ChatComponentText(
+                            COLOR + "Statistics tracking DISABLED. Existing statistics are preserved." + RESET));
+                }
+                return;
+            }
+
+            if ("word".equals(statType) || "words".equals(statType) || "trigger".equals(statType)) {
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "=== Trigger Word Statistics ===" + RESET));
+
+                if (!ChatSoundMod.statsManager.isTrackingEnabled()) {
+                    sender.addChatMessage(new ChatComponentText(
+                            COLOR + "Statistics tracking is currently OFF. Use /clckrm stats on to enable." + RESET));
+                }
+
+                if (!ChatSoundMod.statsManager.hasTriggerWordStats()) {
+                    sender.addChatMessage(new ChatComponentText("No triggers have been activated yet."));
+                    return;
+                }
+
+                List<Map.Entry<String, Integer>> sortedEntries = ChatSoundMod.statsManager.getSortedTriggerWordStats();
+
+                for (Map.Entry<String, Integer> entry : sortedEntries) {
+                    sender.addChatMessage(new ChatComponentText(
+                            COLOR + entry.getKey() + RESET + ": " + entry.getValue() + " times"));
+                }
+
+                int total = ChatSoundMod.statsManager.getTotalTriggerWordCount();
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "Total triggers: " + total + RESET));
+                return;
+            }
+
+            if ("pl".equals(statType) || "player".equals(statType) || "players".equals(statType)) {
+                int page = 1;
+                if (args.length >= 3) {
+                    try {
+                        page = Integer.parseInt(args[2]);
+                    } catch (NumberFormatException e) {
+                        sender.addChatMessage(new ChatComponentText(
+                                COLOR + "Invalid page number. Using page 1." + RESET));
+                        page = 1;
+                    }
+                }
+                
+                ChatSoundMod.currentStatsType = "pl";
+                ChatSoundMod.currentStatsPage = page;
+
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "=== Player Trigger Statistics ===" + RESET));
+
+                if (!ChatSoundMod.statsManager.isTrackingEnabled()) {
+                    sender.addChatMessage(new ChatComponentText(
+                            COLOR + "Statistics tracking is currently OFF. Use /clckrm stats on to enable." + RESET));
+                }
+
+                if (!ChatSoundMod.statsManager.hasPlayerStats()) {
+                    sender.addChatMessage(new ChatComponentText("No players have triggered sounds yet."));
+                    return;
+                }
+
+                List<Map.Entry<String, Integer>> sortedEntries = ChatSoundMod.statsManager.getSortedPlayerStats();
+
+                int totalEntries = sortedEntries.size();
+                int pageSize = 10;
+                int totalPages = (int) Math.ceil((double) totalEntries / pageSize);
+                
+                if (page < 1) page = 1;
+                if (page > totalPages) page = totalPages;
+                
+                int startIndex = (page - 1) * pageSize;
+                int endIndex = Math.min(startIndex + pageSize, totalEntries);
+
+                for (int i = startIndex; i < endIndex; i++) {
+                    Map.Entry<String, Integer> entry = sortedEntries.get(i);
+                    sender.addChatMessage(new ChatComponentText(
+                            COLOR + (i + 1) + ". " + entry.getKey() + RESET + ": " + entry.getValue() + " times"));
+                }
+
+                int total = ChatSoundMod.statsManager.getTotalPlayerTriggerCount();
+                
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "Page " + page + "/" + totalPages + " | Total: " + total + " triggers" + RESET));
+                
+                if (page < totalPages) {
+                    sender.addChatMessage(new ChatComponentText(
+                            COLOR + "Use /clckrm stats pl " + (page + 1) + " for next page" + RESET));
+                }
+                return;
+            }
+
+            if ("clear".equals(statType) || "reset".equals(statType)) {
+                ChatSoundMod.statsManager.clear();
+                sender.addChatMessage(new ChatComponentText(
+                        COLOR + "All statistics have been cleared." + RESET));
+                return;
+            }
+
+            sender.addChatMessage(new ChatComponentText(
+                    COLOR + "Usage: /clckrm Stats <on|off|word|pl|clear> [page]" + RESET));
+            return;
+        }
+
+        // Whitelist management
         if ("wl".equalsIgnoreCase(args[0])) {
             if (args.length < 2) {
                 sender.addChatMessage(new ChatComponentText(
@@ -291,7 +465,6 @@ public class ChatSoundCommand extends CommandBase {
 
             String action = args[1].toLowerCase();
 
-            // Show whitelist/blacklist help
             if ("h".equals(action) || "help".equals(action)) {
                 sender.addChatMessage(new ChatComponentText(COLOR + "Whitelist settings:" + RESET));
                 sender.addChatMessage(new ChatComponentText(COLOR + "/clckrm WL on|off - enable/disable whitelist" + RESET));
@@ -306,7 +479,6 @@ public class ChatSoundCommand extends CommandBase {
                 return;
             }
 
-            // List whitelisted players
             if ("list".equals(action) || "l".equals(action)) {
                 String wlRaw = ChatSoundMod.whitelistPlayers;
                 String wlList = (wlRaw == null || wlRaw.trim().isEmpty()) ? "<none>" : wlRaw;
@@ -317,7 +489,6 @@ public class ChatSoundCommand extends CommandBase {
                 return;
             }
 
-            // Enable or disable whitelist
             if ("on".equals(action) || "off".equals(action)) {
                 boolean enable = "on".equals(action);
                 ChatSoundMod.setWhitelistEnabled(enable);
@@ -332,7 +503,6 @@ public class ChatSoundCommand extends CommandBase {
                 return;
             }
 
-            // Add or remove player from whitelist
             if ("add".equals(action) || "remove".equals(action)) {
                 if (args.length < 3) {
                     sender.addChatMessage(new ChatComponentText(
@@ -352,7 +522,6 @@ public class ChatSoundCommand extends CommandBase {
                 StringBuilder sb = new StringBuilder();
                 boolean found = false;
 
-                // Rebuild list, excluding player if removing
                 for (String part : parts) {
                     String name = part.trim();
                     if (name.isEmpty()) {
@@ -380,6 +549,32 @@ public class ChatSoundCommand extends CommandBase {
                         sb.append(player);
                     }
                     ChatSoundMod.setWhitelistPlayers(sb.toString());
+
+                    // Remove from blacklist if present
+                    String blRaw = ChatSoundMod.blacklistPlayers == null ? "" : ChatSoundMod.blacklistPlayers;
+                    if (!blRaw.trim().isEmpty()) {
+                        String[] blParts = blRaw.split(",");
+                        StringBuilder blSb = new StringBuilder();
+                        boolean blFound = false;
+                        for (String part : blParts) {
+                            String name = part.trim();
+                            if (name.isEmpty()) {
+                                continue;
+                            }
+                            if (name.equalsIgnoreCase(player)) {
+                                blFound = true;
+                                continue;
+                            }
+                            if (blSb.length() > 0) {
+                                blSb.append(",");
+                            }
+                            blSb.append(name);
+                        }
+                        if (blFound) {
+                            ChatSoundMod.setBlacklistPlayers(blSb.toString());
+                        }
+                    }
+
                     sender.addChatMessage(new ChatComponentText(
                             COLOR + "Added to whitelist: " + player + " | Now: " + ChatSoundMod.whitelistPlayers + RESET));
                     return;
@@ -401,7 +596,7 @@ public class ChatSoundCommand extends CommandBase {
             return;
         }
 
-        // Blacklist management - control which players cannot trigger sounds
+        // Blacklist management
         if ("bl".equalsIgnoreCase(args[0]) || "blacklist".equalsIgnoreCase(args[0])) {
             if (args.length < 2) {
                 sender.addChatMessage(new ChatComponentText(
@@ -411,7 +606,6 @@ public class ChatSoundCommand extends CommandBase {
 
             String action = args[1].toLowerCase();
 
-            // List blacklisted players
             if ("list".equals(action) || "l".equals(action)) {
                 String blRaw = ChatSoundMod.blacklistPlayers;
                 String blList = (blRaw == null || blRaw.trim().isEmpty()) ? "<none>" : blRaw;
@@ -422,7 +616,6 @@ public class ChatSoundCommand extends CommandBase {
                 return;
             }
 
-            // Enable or disable blacklist
             if ("on".equals(action) || "off".equals(action)) {
                 boolean enable = "on".equals(action);
                 ChatSoundMod.setBlacklistEnabled(enable);
@@ -437,7 +630,6 @@ public class ChatSoundCommand extends CommandBase {
                 return;
             }
 
-            // Add or remove player from blacklist
             if ("add".equals(action) || "remove".equals(action)) {
                 if (args.length < 3) {
                     sender.addChatMessage(new ChatComponentText(
@@ -457,7 +649,6 @@ public class ChatSoundCommand extends CommandBase {
                 StringBuilder sb = new StringBuilder();
                 boolean found = false;
 
-                // Rebuild list, excluding player if removing
                 for (String part : parts) {
                     String name = part.trim();
                     if (name.isEmpty()) {
@@ -532,7 +723,7 @@ public class ChatSoundCommand extends CommandBase {
             return;
         }
 
-        // Unknown command - show usage
+        // Unknown command
         sender.addChatMessage(new ChatComponentText(
                 COLOR + "Usage: " + getCommandUsage(sender) + RESET));
     }
